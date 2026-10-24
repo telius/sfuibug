@@ -257,21 +257,19 @@ local minimapBtn = nil
 local badgeText = nil
 local ldbDataObject = nil
 
-local function show_tooltip(owner)
-    if not owner or not GameTooltip then return end
-    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
-    GameTooltip:ClearLines()
-    GameTooltip:AddLine("|cff6600ffsfui|r |cffff4444[bug tracker]|r")
+local function populate_tooltip(tt)
+    if not tt then return end
+    tt:AddLine("|cff6600ffsfui|r |cffff4444[bug tracker]|r")
 
     local db = init_db()
     local count = #db.order
     if count == 0 then
-        GameTooltip:AddLine("no errors captured.", 0.6, 0.9, 0.6)
+        tt:AddLine("no errors captured.", 0.6, 0.9, 0.6)
     else
-        GameTooltip:AddDoubleLine("active errors:", tostring(count), 1, 1, 1, 1, 0.28, 0.28)
-        GameTooltip:AddDoubleLine("total logged:", tostring(db.total_recorded or count), 1, 1, 1, 0.8, 0.8, 0.8)
-        GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("recent errors:", 1, 0.82, 0)
+        tt:AddDoubleLine("active errors:", tostring(count), 1, 1, 1, 1, 0.28, 0.28)
+        tt:AddDoubleLine("total logged:", tostring(db.total_recorded or count), 1, 1, 1, 0.8, 0.8, 0.8)
+        tt:AddLine(" ")
+        tt:AddLine("recent errors:", 1, 0.82, 0)
 
         local maxShow = math_min(count, 5)
         for i = 1, maxShow do
@@ -279,7 +277,7 @@ local function show_tooltip(owner)
             local e = db.errors[fp]
             if e then
                 local short_file = string_match(e.file or "", "([^/]+%.lua)$") or e.file or "unknown"
-                GameTooltip:AddDoubleLine(
+                tt:AddDoubleLine(
                     string_format("  [%s] %s:%d", e.module or "core", short_file, e.line or 0),
                     string_format("x%d", e.count or 1),
                     1, 1, 1, 1, 0.5, 0.5
@@ -288,11 +286,10 @@ local function show_tooltip(owner)
         end
     end
 
-    GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("|cff00ff88left-click|r: print error list in chat", 0.8, 0.8, 0.8)
-    GameTooltip:AddLine("|cff00ff88right-click|r: clear error database", 0.8, 0.8, 0.8)
-    GameTooltip:AddLine("|cff00ff88drag|r: move minimap icon", 0.8, 0.8, 0.8)
-    GameTooltip:Show()
+    tt:AddLine(" ")
+    tt:AddLine("|cff00ff88left-click|r: print error list in chat", 0.8, 0.8, 0.8)
+    tt:AddLine("|cff00ff88right-click|r: clear error database", 0.8, 0.8, 0.8)
+    tt:AddLine("|cff00ff88drag|r: move minimap icon", 0.8, 0.8, 0.8)
 end
 
 local function update_native_position(btn, angle)
@@ -365,7 +362,12 @@ init_minimap = function()
                     end
                 end,
                 OnTooltipShow = function(tt)
-                    show_tooltip(tt)
+                    populate_tooltip(tt)
+                end,
+                OnLeave = function()
+                    if GameTooltip and GameTooltip:IsShown() then
+                        GameTooltip:Hide()
+                    end
                 end,
             })
 
@@ -375,6 +377,11 @@ init_minimap = function()
         local iconBtn = ldbi:GetMinimapButton("sfuibug")
         if iconBtn then
             minimapBtn = iconBtn
+            iconBtn:HookScript("OnLeave", function()
+                if GameTooltip and GameTooltip:IsShown() then
+                    GameTooltip:Hide()
+                end
+            end)
             if iconBtn.icon then
                 iconBtn.icon:SetTexture(ICON_TEXTURE)
                 iconBtn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
@@ -434,12 +441,22 @@ init_minimap = function()
             end
         end)
 
+        local function show_native_tooltip(owner)
+            if not owner or not GameTooltip then return end
+            GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
+            GameTooltip:ClearLines()
+            populate_tooltip(GameTooltip)
+            GameTooltip:Show()
+        end
+
         btn:SetScript("OnEnter", function(self)
-            show_tooltip(self)
+            show_native_tooltip(self)
         end)
 
-        btn:SetScript("OnLeave", function()
-            if GameTooltip then GameTooltip:Hide() end
+        btn:SetScript("OnLeave", function(self)
+            if GameTooltip and GameTooltip:GetOwner() == self then
+                GameTooltip:Hide()
+            end
         end)
 
         btn:SetScript("OnDragStart", function(self)
