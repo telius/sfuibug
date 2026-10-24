@@ -5,7 +5,8 @@
 ## Notes: dedicated lightweight bug tracker and dispatcher monitor for sfui.
 ## SavedVariables: SfuiBugDB
 ## LoadOnDemand: 0
-## OptionalDeps: sfui, LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0
+## Dependencies: sfui
+## OptionalDeps: LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0
 ## IconTexture: 136122
 
 sfuibug.lua
