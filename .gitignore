@@ -1,0 +1,9 @@
+# os / editor files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+*.bak
+
+# wtf / saved variables backups
+*.lua.bak
