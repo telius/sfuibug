@@ -8,9 +8,14 @@ local tostring, tonumber, type = _G.tostring, _G.tonumber, _G.type
 local string_format, string_match, string_gsub = _G.string.format, _G.string.match, _G.string.gsub
 local table_insert, table_remove = _G.table.insert, _G.table.remove
 local pairs, ipairs, time = _G.pairs, _G.ipairs, _G.time
+local math_min, math_max, math_rad, math_deg, math_cos, math_sin, math_abs, math_atan2 =
+    _G.math.min, _G.math.max, _G.math.rad, _G.math.deg, _G.math.cos, _G.math.sin, _G.math.abs, _G.math.atan2
 local debugstack = _G.debugstack
 local InCombatLockdown = _G.InCombatLockdown
 local GetBuildInfo = _G.GetBuildInfo
+local CreateFrame = _G.CreateFrame
+local Minimap = _G.Minimap
+local GameTooltip = _G.GameTooltip
 
 -- global export
 _G.sfuibug = _G.sfuibug or {}
@@ -19,9 +24,16 @@ local sfuibug = _G.sfuibug
 -- configuration constants
 local MAX_ERRORS = 25
 local PREFIX = "|cff6600ffsfui|r |cffff4444[bug]|r "
+-- curse of doom (spell_shadow_auraofdarkness) icon
+local ICON_TEXTURE = 136122
+local ICON_PATH = "Interface\\Icons\\spell_shadow_auraofdarkness"
 
 -- session notification throttle (fingerprint -> true)
 local _notifiedThisSession = {}
+
+-- forward declarations
+local update_badge
+local init_minimap
 
 -- ─── secret value safety guards ─────────────────────────────────────────────
 local function is_secret_or_inaccessible(val)
@@ -109,6 +121,7 @@ local function init_db()
     db.errors = db.errors or {}
     db.order = db.order or {}
     db.total_recorded = db.total_recorded or 0
+    db.minimap = db.minimap or { hide = false, minimapPos = 220 }
     return db
 end
 
@@ -185,6 +198,7 @@ function sfuibug.RecordError(ctx, err, stack)
         print(PREFIX .. "[" .. mod .. "] " .. short_file .. ":" .. line .. " - " .. err_msg .. count_suffix)
     end
 
+    update_badge()
     return fp
 end
 
@@ -193,12 +207,29 @@ function sfuibug.Clear()
     db.errors = {}
     db.order = {}
     _notifiedThisSession = {}
+    update_badge()
     print(PREFIX .. "error database cleared.")
 end
 
 function sfuibug.GetErrors()
     local db = init_db()
     return db.errors, db.order
+end
+
+function sfuibug.List()
+    local db = init_db()
+    local count = #db.order
+    if count == 0 then
+        print(PREFIX .. "no recorded errors.")
+        return
+    end
+    print(PREFIX .. "recorded errors (" .. count .. "):")
+    for i, fp in ipairs(db.order) do
+        local e = db.errors[fp]
+        if e then
+            print(string_format("  |cffaaaaaa#%d|r [|cff00ff88%s|r] %s:%d (x%d): %s", i, e.module, e.file, e.line, e.count, e.message))
+        end
+    end
 end
 
 -- ─── global error handler hook ─────────────────────────────────────────────
@@ -221,6 +252,250 @@ if _G.seterrorhandler then
     _G.seterrorhandler(_sfuibug_global_error_handler)
 end
 
+-- ─── minimap icon implementation ───────────────────────────────────────────
+local minimapBtn = nil
+local badgeText = nil
+local ldbDataObject = nil
+
+local function show_tooltip(owner)
+    if not owner or not GameTooltip then return end
+    GameTooltip:SetOwner(owner, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:ClearLines()
+    GameTooltip:AddLine("|cff6600ffsfui|r |cffff4444[bug tracker]|r")
+
+    local db = init_db()
+    local count = #db.order
+    if count == 0 then
+        GameTooltip:AddLine("no errors captured.", 0.6, 0.9, 0.6)
+    else
+        GameTooltip:AddDoubleLine("active errors:", tostring(count), 1, 1, 1, 1, 0.28, 0.28)
+        GameTooltip:AddDoubleLine("total logged:", tostring(db.total_recorded or count), 1, 1, 1, 0.8, 0.8, 0.8)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("recent errors:", 1, 0.82, 0)
+
+        local maxShow = math_min(count, 5)
+        for i = 1, maxShow do
+            local fp = db.order[count - i + 1]
+            local e = db.errors[fp]
+            if e then
+                local short_file = string_match(e.file or "", "([^/]+%.lua)$") or e.file or "unknown"
+                GameTooltip:AddDoubleLine(
+                    string_format("  [%s] %s:%d", e.module or "core", short_file, e.line or 0),
+                    string_format("x%d", e.count or 1),
+                    1, 1, 1, 1, 0.5, 0.5
+                )
+            end
+        end
+    end
+
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("|cff00ff88left-click|r: print error list in chat", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("|cff00ff88right-click|r: clear error database", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("|cff00ff88drag|r: move minimap icon", 0.8, 0.8, 0.8)
+    GameTooltip:Show()
+end
+
+local function update_native_position(btn, angle)
+    if not btn or not Minimap then return end
+    local rad = math_rad(angle or 220)
+    local cos = math_cos(rad)
+    local sin = math_sin(rad)
+    local isSquare = _G.GetMinimapShape and _G.GetMinimapShape() == "SQUARE"
+    local x, y
+
+    if isSquare then
+        local w = (Minimap:GetWidth() / 2) + 7
+        local h = (Minimap:GetHeight() / 2) + 7
+        local absCos = math_abs(cos)
+        local absSin = math_abs(sin)
+        if absCos * h > absSin * w then
+            x = (cos > 0 and w or -w)
+            y = (cos > 0 and w or -w) * sin / cos
+        else
+            x = (sin > 0 and h or -h) * cos / sin
+            y = (sin > 0 and h or -h)
+        end
+    else
+        local radius = (Minimap:GetWidth() / 2) + 7
+        x = cos * radius
+        y = sin * radius
+    end
+
+    btn:ClearAllPoints()
+    btn:SetPoint("CENTER", Minimap, "CENTER", x, y)
+end
+
+update_badge = function()
+    local db = init_db()
+    local count = #db.order
+    local text = count > 0 and tostring(count) or ""
+
+    if badgeText then
+        badgeText:SetText(text)
+        if count > 0 then
+            badgeText:Show()
+        else
+            badgeText:Hide()
+        end
+    end
+
+    if ldbDataObject then
+        ldbDataObject.text = tostring(count)
+    end
+end
+
+init_minimap = function()
+    local db = init_db()
+
+    -- 1. Try LibDataBroker + LibDBIcon integration (standard across sfui & broker bars)
+    local ldb = _G.LibStub and _G.LibStub("LibDataBroker-1.1", true)
+    local ldbi = _G.LibStub and _G.LibStub("LibDBIcon-1.0", true)
+
+    if ldb and ldbi then
+        if not ldbDataObject then
+            ldbDataObject = ldb:NewDataObject("sfuibug", {
+                type = "data source",
+                text = "0",
+                icon = ICON_TEXTURE,
+                OnClick = function(_, button)
+                    if button == "RightButton" then
+                        sfuibug.Clear()
+                    else
+                        sfuibug.List()
+                    end
+                end,
+                OnTooltipShow = function(tt)
+                    show_tooltip(tt)
+                end,
+            })
+
+            ldbi:Register("sfuibug", ldbDataObject, db.minimap)
+        end
+
+        local iconBtn = ldbi:GetMinimapButton("sfuibug")
+        if iconBtn then
+            minimapBtn = iconBtn
+            if iconBtn.icon then
+                iconBtn.icon:SetTexture(ICON_TEXTURE)
+                iconBtn.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            end
+            if not badgeText then
+                badgeText = iconBtn:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+                badgeText:SetPoint("BOTTOMRIGHT", iconBtn, "BOTTOMRIGHT", 2, 0)
+                badgeText:SetTextColor(1, 0.28, 0.28, 1)
+            end
+            update_badge()
+            return
+        end
+    end
+
+    -- 2. Native dependency-free minimap button fallback
+    if not minimapBtn and Minimap then
+        local btn = CreateFrame("Button", "SfuiBugMinimapButton", Minimap)
+        btn:SetSize(31, 31)
+        btn:SetFrameStrata("MEDIUM")
+        btn:SetFrameLevel(8)
+        btn:SetMovable(true)
+        btn:EnableMouse(true)
+        btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        btn:RegisterForDrag("LeftButton")
+
+        -- icon texture (curse of doom)
+        local icon = btn:CreateTexture(nil, "BACKGROUND")
+        icon:SetSize(20, 20)
+        icon:SetPoint("CENTER", btn, "CENTER", 0, 0)
+        icon:SetTexture(ICON_TEXTURE)
+        icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        btn.icon = icon
+
+        -- circular minimap border
+        local border = btn:CreateTexture(nil, "OVERLAY")
+        border:SetSize(52, 52)
+        border:SetPoint("TOPLEFT", btn, "TOPLEFT", -1, 1)
+        border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+
+        -- highlight
+        local highlight = btn:CreateTexture(nil, "HIGHLIGHT")
+        highlight:SetSize(20, 20)
+        highlight:SetPoint("CENTER", btn, "CENTER", 0, 0)
+        highlight:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+        -- error counter badge
+        badgeText = btn:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+        badgeText:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 2, 0)
+        badgeText:SetTextColor(1, 0.28, 0.28, 1)
+
+        -- scripts
+        btn:SetScript("OnClick", function(_, button)
+            if button == "RightButton" then
+                sfuibug.Clear()
+            else
+                sfuibug.List()
+            end
+        end)
+
+        btn:SetScript("OnEnter", function(self)
+            show_tooltip(self)
+        end)
+
+        btn:SetScript("OnLeave", function()
+            if GameTooltip then GameTooltip:Hide() end
+        end)
+
+        btn:SetScript("OnDragStart", function(self)
+            self:LockHighlight()
+            self:SetScript("OnUpdate", function(s)
+                local mx, my = Minimap:GetCenter()
+                local cx, cy = _G.GetCursorPosition()
+                local scale = Minimap:GetEffectiveScale()
+                cx, cy = cx / scale, cy / scale
+                local angle = math_deg(math_atan2(cy - my, cx - mx))
+                if angle < 0 then angle = angle + 360 end
+                db.minimap.minimapPos = angle
+                update_native_position(s, angle)
+            end)
+        end)
+
+        btn:SetScript("OnDragStop", function(self)
+            self:UnlockHighlight()
+            self:SetScript("OnUpdate", nil)
+        end)
+
+        minimapBtn = btn
+        update_native_position(btn, db.minimap.minimapPos or 220)
+
+        if db.minimap.hide then
+            btn:Hide()
+        else
+            btn:Show()
+        end
+    end
+
+    update_badge()
+end
+
+function sfuibug.ToggleMinimap()
+    local db = init_db()
+    db.minimap.hide = not db.minimap.hide
+
+    local ldbi = _G.LibStub and _G.LibStub("LibDBIcon-1.0", true)
+    if ldbi and ldbi:GetMinimapButton("sfuibug") then
+        if db.minimap.hide then
+            ldbi:Hide("sfuibug")
+        else
+            ldbi:Show("sfuibug")
+        end
+    elseif minimapBtn then
+        if db.minimap.hide then
+            minimapBtn:Hide()
+        else
+            minimapBtn:Show()
+        end
+    end
+
+    print(PREFIX .. "minimap icon " .. (db.minimap.hide and "hidden" or "shown") .. ".")
+end
+
 -- ─── slash command handler ─────────────────────────────────────────────────
 local function slash_cmd(msg)
     local cmd = string.lower(string_match(msg or "", "^%s*(%S+)") or "")
@@ -229,22 +504,15 @@ local function slash_cmd(msg)
     if cmd == "clear" or cmd == "wipe" then
         sfuibug.Clear()
     elseif cmd == "list" or cmd == "show" then
-        local count = #db.order
-        if count == 0 then
-            print(PREFIX .. "no recorded errors.")
-            return
-        end
-        print(PREFIX .. "recorded errors (" .. count .. "):")
-        for i, fp in ipairs(db.order) do
-            local e = db.errors[fp]
-            if e then
-                print(string_format("  |cffaaaaaa#%d|r [|cff00ff88%s|r] %s:%d (x%d): %s", i, e.module, e.file, e.line, e.count, e.message))
-            end
-        end
+        sfuibug.List()
+    elseif cmd == "icon" or cmd == "minimap" then
+        sfuibug.ToggleMinimap()
     else
         local count = #db.order
         print(PREFIX .. "active errors: " .. count .. " (total logged: " .. (db.total_recorded or 0) .. ")")
-        print("  type |cff00ff88/sfuibug list|r to inspect or |cff00ff88/sfuibug clear|r to reset.")
+        print("  |cff00ff88/sfuibug list|r to inspect errors.")
+        print("  |cff00ff88/sfuibug clear|r to reset database.")
+        print("  |cff00ff88/sfuibug icon|r to toggle minimap button.")
     end
 end
 
@@ -253,10 +521,13 @@ _G.SLASH_SFUIBUG2 = "/sfbug"
 _G.SlashCmdList["SFUIBUG"] = slash_cmd
 
 -- ─── frame initialization ───────────────────────────────────────────────────
-local f = _G.CreateFrame("Frame")
+local f = CreateFrame("Frame")
 f:RegisterEvent("ADDON_LOADED")
+f:RegisterEvent("PLAYER_LOGIN")
 f:SetScript("OnEvent", function(_, event, name)
-    if name == "sfuibug" then
+    if event == "ADDON_LOADED" and name == "sfuibug" then
         init_db()
+    elseif event == "PLAYER_LOGIN" then
+        init_minimap()
     end
 end)
