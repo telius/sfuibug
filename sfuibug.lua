@@ -8,8 +8,7 @@ local tostring, tonumber, type = _G.tostring, _G.tonumber, _G.type
 local string_format, string_match, string_gsub = _G.string.format, _G.string.match, _G.string.gsub
 local table_insert, table_remove = _G.table.insert, _G.table.remove
 local pairs, ipairs, time = _G.pairs, _G.ipairs, _G.time
-local math_min, math_max, math_rad, math_deg, math_cos, math_sin, math_abs, math_atan2 =
-    _G.math.min, _G.math.max, _G.math.rad, _G.math.deg, _G.math.cos, _G.math.sin, _G.math.abs, _G.math.atan2
+local math_min = _G.math.min
 local debugstack = _G.debugstack
 local InCombatLockdown = _G.InCombatLockdown
 local GetBuildInfo = _G.GetBuildInfo
@@ -120,8 +119,8 @@ local function init_db()
     db.version = 1
     db.errors = db.errors or {}
     db.order = db.order or {}
-    db.total_recorded = db.total_recorded or 0
-    db.minimap = db.minimap or { hide = false, minimapPos = 220 }
+    db.minimap = db.minimap or { hide = false }
+    db.minimap.minimapPos = nil
     return db
 end
 
@@ -289,37 +288,6 @@ local function populate_tooltip(tt)
     tt:AddLine(" ")
     tt:AddLine("|cff00ff88left-click|r: print error list in chat", 0.8, 0.8, 0.8)
     tt:AddLine("|cff00ff88right-click|r: clear error database", 0.8, 0.8, 0.8)
-    tt:AddLine("|cff00ff88drag|r: move minimap icon", 0.8, 0.8, 0.8)
-end
-
-local function update_native_position(btn, angle)
-    if not btn or not Minimap then return end
-    local rad = math_rad(angle or 220)
-    local cos = math_cos(rad)
-    local sin = math_sin(rad)
-    local isSquare = _G.GetMinimapShape and _G.GetMinimapShape() == "SQUARE"
-    local x, y
-
-    if isSquare then
-        local w = (Minimap:GetWidth() / 2) + 7
-        local h = (Minimap:GetHeight() / 2) + 7
-        local absCos = math_abs(cos)
-        local absSin = math_abs(sin)
-        if absCos * h > absSin * w then
-            x = (cos > 0 and w or -w)
-            y = (cos > 0 and w or -w) * sin / cos
-        else
-            x = (sin > 0 and h or -h) * cos / sin
-            y = (sin > 0 and h or -h)
-        end
-    else
-        local radius = (Minimap:GetWidth() / 2) + 7
-        x = cos * radius
-        y = sin * radius
-    end
-
-    btn:ClearAllPoints()
-    btn:SetPoint("CENTER", Minimap, "CENTER", x, y)
 end
 
 update_badge = function()
@@ -402,10 +370,8 @@ init_minimap = function()
         btn:SetSize(31, 31)
         btn:SetFrameStrata("MEDIUM")
         btn:SetFrameLevel(8)
-        btn:SetMovable(true)
         btn:EnableMouse(true)
         btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        btn:RegisterForDrag("LeftButton")
 
         -- icon texture (curse of doom)
         local icon = btn:CreateTexture(nil, "BACKGROUND")
@@ -459,27 +425,8 @@ init_minimap = function()
             end
         end)
 
-        btn:SetScript("OnDragStart", function(self)
-            self:LockHighlight()
-            self:SetScript("OnUpdate", function(s)
-                local mx, my = Minimap:GetCenter()
-                local cx, cy = _G.GetCursorPosition()
-                local scale = Minimap:GetEffectiveScale()
-                cx, cy = cx / scale, cy / scale
-                local angle = math_deg(math_atan2(cy - my, cx - mx))
-                if angle < 0 then angle = angle + 360 end
-                db.minimap.minimapPos = angle
-                update_native_position(s, angle)
-            end)
-        end)
-
-        btn:SetScript("OnDragStop", function(self)
-            self:UnlockHighlight()
-            self:SetScript("OnUpdate", nil)
-        end)
-
+        btn:SetPoint("CENTER", Minimap, "CENTER", 0, 0)
         minimapBtn = btn
-        update_native_position(btn, db.minimap.minimapPos or 220)
 
         if db.minimap.hide then
             btn:Hide()
