@@ -6,6 +6,7 @@
 ## SavedVariables: SfuiBugDB
 ## LoadOnDemand: 0
 ## Dependencies: sfui
+## Group: sfui
 ## OptionalDeps: LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0
 ## IconTexture: 136122
 
