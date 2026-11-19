@@ -1,7 +1,7 @@
-## Interface: 120105, 120000, 110007, 110100, 16001, 11506, 40402
+## Interface: 120105, 16001, 11509
 ## Title: |cff6600ffsf|rui bug
 ## Author: teli
-## Version: v1.0
+## Version: v1.1
 ## Notes: dedicated lightweight bug tracker and dispatcher monitor for sfui.
 ## SavedVariables: SfuiBugDB
 ## LoadOnDemand: 0
